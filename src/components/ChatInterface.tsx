@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Mic, MicOff, Loader2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,46 +22,90 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [transcript, setTranscript] = useState("");
   const { toast } = useToast();
+  const audioContext = useRef<AudioContext | null>(null);
+  const analyserNode = useRef<AnalyserNode | null>(null);
+  const source = useRef<MediaStreamAudioSourceNode | null>(null);
 
   useEffect(() => {
-    // Cleanup function to stop recording when component unmounts
     return () => {
       if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
       }
+      if (audioContext.current) {
+        audioContext.current.close();
+      }
     };
   }, [mediaRecorder]);
 
+  const setupAudioAnalysis = (stream: MediaStream) => {
+    audioContext.current = new AudioContext();
+    analyserNode.current = audioContext.current.createAnalyser();
+    source.current = audioContext.current.createMediaStreamSource(stream);
+    source.current.connect(analyserNode.current);
+    
+    // Set up audio analysis
+    analyserNode.current.fftSize = 2048;
+    const bufferLength = analyserNode.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    // Monitor audio levels
+    const checkAudioLevel = () => {
+      if (!isRecording || !analyserNode.current) return;
+      
+      analyserNode.current.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+      
+      if (average > 0) {
+        console.log("Voice detected:", average);
+      }
+      
+      requestAnimationFrame(checkAudioLevel);
+    };
+    
+    checkAudioLevel();
+  };
+
   const requestMicrophonePermission = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+      
+      setupAudioAnalysis(stream);
+      
+      const recorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm'
+      });
       
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           setAudioChunks((prev) => [...prev, event.data]);
+          console.log("Audio chunk received:", event.data.size, "bytes");
         }
       };
 
       recorder.onstop = async () => {
         setIsProcessing(true);
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        console.log("Recording stopped. Audio blob size:", audioBlob.size, "bytes");
         
-        // Here you would typically send the audioBlob to a speech-to-text service
-        // For now, we'll simulate a response after a short delay
+        // For now, we'll still use the simulation
+        // In a real implementation, you would send the audioBlob to a speech-to-text service
         setTimeout(() => {
           const simulatedTranscript = "This is a simulated transcript of the recorded audio.";
           setTranscript(simulatedTranscript);
           setIsProcessing(false);
           
-          // Add the transcribed message to chat
           onNewMessage({
             type: "user",
             content: simulatedTranscript,
             timestamp: new Date().toLocaleTimeString(),
           });
           
-          // Clear audio chunks for next recording
           setAudioChunks([]);
         }, 2000);
       };
@@ -81,22 +125,29 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
 
   const handleRecordClick = async () => {
     if (isRecording) {
-      // Stop recording
       if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
         setIsRecording(false);
+        
+        // Clean up audio analysis
+        if (source.current) {
+          source.current.disconnect();
+        }
+        if (audioContext.current) {
+          audioContext.current.close();
+        }
       }
     } else {
-      // Start recording
       if (!mediaRecorder) {
         const hasPermission = await requestMicrophonePermission();
         if (!hasPermission) return;
       }
       
       if (mediaRecorder && mediaRecorder.state === "inactive") {
-        setAudioChunks([]); // Clear previous chunks
+        setAudioChunks([]);
         setIsRecording(true);
-        mediaRecorder.start(1000); // Collect data every second
+        mediaRecorder.start(1000);
+        console.log("Started recording");
       }
     }
   };
@@ -159,6 +210,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
       </div>
     </div>
   );
+
 };
 
 export default ChatInterface;
