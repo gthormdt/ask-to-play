@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Mic } from "lucide-react";
+import { Mic, MicOff, Loader2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   type: "user" | "assistant";
@@ -16,10 +17,77 @@ interface ChatInterfaceProps {
 
 const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [transcript, setTranscript] = useState("");
+  const { toast } = useToast();
+
+  useEffect(() => {
+    // Cleanup function to stop recording when component unmounts
+    return () => {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    };
+  }, [mediaRecorder]);
+
+  const requestMicrophonePermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      
+      recorder.ondataavailable = async (event) => {
+        if (event.data.size > 0) {
+          // Here you would typically send the audio data to a speech-to-text service
+          // For now, we'll simulate a response
+          setIsProcessing(true);
+          setTimeout(() => {
+            setTranscript("This is a simulated transcript of the recorded audio.");
+            setIsProcessing(false);
+            setIsRecording(false);
+            
+            // Add the transcribed message to chat
+            onNewMessage({
+              type: "user",
+              content: "This is a simulated transcript of the recorded audio.",
+              timestamp: new Date().toLocaleTimeString(),
+            });
+          }, 2000);
+        }
+      };
+
+      setMediaRecorder(recorder);
+      return true;
+    } catch (error) {
+      console.error("Error accessing microphone:", error);
+      toast({
+        title: "Microphone Access Required",
+        description: "Please enable microphone access to use voice recording.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
 
   const handleRecordClick = async () => {
-    setIsRecording(!isRecording);
-    // Voice recording functionality will be implemented later
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        setIsRecording(false);
+      }
+    } else {
+      // Start recording
+      if (!mediaRecorder) {
+        const hasPermission = await requestMicrophonePermission();
+        if (!hasPermission) return;
+      }
+      
+      if (mediaRecorder && mediaRecorder.state === "inactive") {
+        setIsRecording(true);
+        mediaRecorder.start();
+      }
+    }
   };
 
   return (
@@ -43,6 +111,11 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
               )}
             </div>
           ))}
+          {transcript && isProcessing && (
+            <div className="bg-primary/10 p-3 rounded-lg ml-auto max-w-[80%]">
+              <p className="text-sm opacity-70">{transcript}</p>
+            </div>
+          )}
         </div>
       </ScrollArea>
       <div className="flex items-center gap-4">
@@ -53,9 +126,24 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
               ? "bg-red-500 hover:bg-red-600 animate-pulse-record"
               : "bg-primary hover:bg-primary/90"
           }`}
+          disabled={isProcessing}
         >
-          <Mic className="w-4 h-4 mr-2" />
-          {isRecording ? "Recording..." : "Ask a Question"}
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : isRecording ? (
+            <>
+              <Mic className="w-4 h-4 mr-2 animate-pulse" />
+              Recording...
+            </>
+          ) : (
+            <>
+              <Mic className="w-4 h-4 mr-2" />
+              Ask a Question
+            </>
+          )}
         </Button>
       </div>
     </div>
