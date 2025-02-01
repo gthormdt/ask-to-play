@@ -19,6 +19,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [transcript, setTranscript] = useState("");
   const { toast } = useToast();
 
@@ -36,24 +37,33 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       
-      recorder.ondataavailable = async (event) => {
+      recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          // Here you would typically send the audio data to a speech-to-text service
-          // For now, we'll simulate a response
-          setIsProcessing(true);
-          setTimeout(() => {
-            setTranscript("This is a simulated transcript of the recorded audio.");
-            setIsProcessing(false);
-            setIsRecording(false);
-            
-            // Add the transcribed message to chat
-            onNewMessage({
-              type: "user",
-              content: "This is a simulated transcript of the recorded audio.",
-              timestamp: new Date().toLocaleTimeString(),
-            });
-          }, 2000);
+          setAudioChunks((prev) => [...prev, event.data]);
         }
+      };
+
+      recorder.onstop = async () => {
+        setIsProcessing(true);
+        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        
+        // Here you would typically send the audioBlob to a speech-to-text service
+        // For now, we'll simulate a response after a short delay
+        setTimeout(() => {
+          const simulatedTranscript = "This is a simulated transcript of the recorded audio.";
+          setTranscript(simulatedTranscript);
+          setIsProcessing(false);
+          
+          // Add the transcribed message to chat
+          onNewMessage({
+            type: "user",
+            content: simulatedTranscript,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+          
+          // Clear audio chunks for next recording
+          setAudioChunks([]);
+        }, 2000);
       };
 
       setMediaRecorder(recorder);
@@ -84,8 +94,9 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
       }
       
       if (mediaRecorder && mediaRecorder.state === "inactive") {
+        setAudioChunks([]); // Clear previous chunks
         setIsRecording(true);
-        mediaRecorder.start();
+        mediaRecorder.start(1000); // Collect data every second
       }
     }
   };
