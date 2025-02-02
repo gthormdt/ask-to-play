@@ -18,136 +18,111 @@ interface ChatInterfaceProps {
 const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [transcript, setTranscript] = useState("");
   const { toast } = useToast();
-  const audioContext = useRef<AudioContext | null>(null);
-  const analyserNode = useRef<AnalyserNode | null>(null);
-  const source = useRef<MediaStreamAudioSourceNode | null>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.stop();
-      }
-      if (audioContext.current) {
-        audioContext.current.close();
-      }
-    };
-  }, [mediaRecorder]);
-
-  const setupAudioAnalysis = (stream: MediaStream) => {
-    audioContext.current = new AudioContext();
-    analyserNode.current = audioContext.current.createAnalyser();
-    source.current = audioContext.current.createMediaStreamSource(stream);
-    source.current.connect(analyserNode.current);
-    
-    // Set up audio analysis
-    analyserNode.current.fftSize = 2048;
-    const bufferLength = analyserNode.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    
-    // Monitor audio levels
-    const checkAudioLevel = () => {
-      if (!isRecording || !analyserNode.current) return;
-      
-      analyserNode.current.getByteFrequencyData(dataArray);
-      const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-      
-      if (average > 0) {
-        console.log("Voice detected:", average);
-      }
-      
-      requestAnimationFrame(checkAudioLevel);
-    };
-    
-    checkAudioLevel();
-  };
-
-  const requestMicrophonePermission = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        } 
+    // Check if browser supports speech recognition
+    if (!('webkitSpeechRecognition' in window)) {
+      toast({
+        title: "Browser Not Supported",
+        description: "Speech recognition is not supported in your browser. Please use Chrome or Edge.",
+        variant: "destructive",
       });
+      return;
+    }
+
+    // Initialize speech recognition
+    const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    
+    if (recognitionRef.current) {
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
       
-      setupAudioAnalysis(stream);
-      
-      const recorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm'
-      });
-      
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          setAudioChunks((prev) => [...prev, event.data]);
-          console.log("Audio chunk received:", event.data.size, "bytes");
+      recognitionRef.current.onstart = () => {
+        console.log("Speech recognition started");
+        setIsRecording(true);
+      };
+
+      recognitionRef.current.onresult = (event) => {
+        const current = event.resultIndex;
+        const transcriptResult = event.results[current][0].transcript;
+        console.log("Transcript received:", transcriptResult);
+        
+        const isFinal = event.results[current].isFinal;
+        
+        if (isFinal) {
+          setTranscript(transcriptResult);
+          console.log("Final transcript:", transcriptResult);
+        } else {
+          // Show interim results
+          setTranscript(transcriptResult);
         }
       };
 
-      recorder.onstop = async () => {
-        setIsProcessing(true);
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        console.log("Recording stopped. Audio blob size:", audioBlob.size, "bytes");
-        
-        // For now, we'll still use the simulation
-        // In a real implementation, you would send the audioBlob to a speech-to-text service
-        setTimeout(() => {
-          const simulatedTranscript = "This is a simulated transcript of the recorded audio.";
-          setTranscript(simulatedTranscript);
-          setIsProcessing(false);
-          
-          onNewMessage({
-            type: "user",
-            content: simulatedTranscript,
-            timestamp: new Date().toLocaleTimeString(),
-          });
-          
-          setAudioChunks([]);
-        }, 2000);
+      recognitionRef.current.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
+        toast({
+          title: "Recognition Error",
+          description: `Error: ${event.error}. Please try again.`,
+          variant: "destructive",
+        });
       };
 
-      setMediaRecorder(recorder);
-      return true;
-    } catch (error) {
-      console.error("Error accessing microphone:", error);
-      toast({
-        title: "Microphone Access Required",
-        description: "Please enable microphone access to use voice recording.",
-        variant: "destructive",
-      });
-      return false;
+      recognitionRef.current.onend = () => {
+        console.log("Speech recognition ended");
+        setIsRecording(false);
+        
+        // Only process if we have a transcript
+        if (transcript) {
+          setIsProcessing(true);
+          // Add the message to chat
+          onNewMessage({
+            type: "user",
+            content: transcript,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+          setIsProcessing(false);
+          setTranscript("");
+        } else {
+          toast({
+            title: "No Speech Detected",
+            description: "I didn't hear anything. Try speaking louder or check your mic settings.",
+            variant: "destructive",
+          });
+        }
+      };
     }
-  };
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, [toast, transcript, onNewMessage]);
 
   const handleRecordClick = async () => {
     if (isRecording) {
-      if (mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.stop();
-        setIsRecording(false);
-        
-        // Clean up audio analysis
-        if (source.current) {
-          source.current.disconnect();
-        }
-        if (audioContext.current) {
-          audioContext.current.close();
-        }
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
     } else {
-      if (!mediaRecorder) {
-        const hasPermission = await requestMicrophonePermission();
-        if (!hasPermission) return;
-      }
-      
-      if (mediaRecorder && mediaRecorder.state === "inactive") {
-        setAudioChunks([]);
-        setIsRecording(true);
-        mediaRecorder.start(1000);
-        console.log("Started recording");
+      try {
+        // Request microphone permission
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        if (recognitionRef.current) {
+          recognitionRef.current.start();
+        }
+      } catch (error) {
+        console.error("Error accessing microphone:", error);
+        toast({
+          title: "Microphone Access Required",
+          description: "Please enable microphone access to use voice recording.",
+          variant: "destructive",
+        });
       }
     }
   };
@@ -173,7 +148,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
               )}
             </div>
           ))}
-          {transcript && isProcessing && (
+          {transcript && (
             <div className="bg-primary/10 p-3 rounded-lg ml-auto max-w-[80%]">
               <p className="text-sm opacity-70">{transcript}</p>
             </div>
@@ -185,7 +160,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
           onClick={handleRecordClick}
           className={`w-full ${
             isRecording
-              ? "bg-red-500 hover:bg-red-600 animate-pulse-record"
+              ? "bg-red-500 hover:bg-red-600 animate-pulse"
               : "bg-primary hover:bg-primary/90"
           }`}
           disabled={isProcessing}
@@ -210,7 +185,6 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
       </div>
     </div>
   );
-
 };
 
 export default ChatInterface;
