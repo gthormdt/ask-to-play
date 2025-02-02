@@ -34,8 +34,8 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
     }
 
     // Initialize speech recognition
-    const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-    recognitionRef.current = new SpeechRecognition();
+    const SpeechRecognitionAPI = window.webkitSpeechRecognition || window.SpeechRecognition;
+    recognitionRef.current = new SpeechRecognitionAPI();
     
     if (recognitionRef.current) {
       recognitionRef.current.continuous = true;
@@ -46,7 +46,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
         setIsRecording(true);
       };
 
-      recognitionRef.current.onresult = (event) => {
+      recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
         const current = event.resultIndex;
         const transcriptResult = event.results[current][0].transcript;
         console.log("Transcript received:", transcriptResult);
@@ -62,7 +62,7 @@ const ChatInterface = ({ messages, onNewMessage }: ChatInterfaceProps) => {
         }
       };
 
-      recognitionRef.current.onerror = (event) => {
+      recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error("Speech recognition error:", event.error);
         toast({
           title: "Recognition Error",
